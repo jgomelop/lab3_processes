@@ -22,6 +22,19 @@ struct SharedMatrixData {
     // The actual matrix data will be stored after this struct in memory
 };
 
+// Function declarations remain unchanged
+vector<vector<double>> readMatrix(const string& filename, int& rows, int& cols);
+void writeMatrix(const string& filename, const vector<vector<double>>& matrix);
+vector<vector<double>> multiplyMatricesSequential(const vector<vector<double>>& A, const vector<vector<double>>& B);
+void* createSharedMatrix(const vector<vector<double>>& matrix, const string& shm_name);
+double getMatrixElement(void* shm_ptr, int row, int col);
+void setMatrixElement(void* shm_ptr, int row, int col, double value);
+vector<vector<double>> extractMatrix(void* shm_ptr);
+void calculateMatrixPortion(void* matrixA, void* matrixB, void* matrixC, int start_row, int end_row);
+void cleanupSharedMemory(const string& shm_name, void* ptr, size_t size);
+vector<vector<double>> multiplyMatricesParallel(const vector<vector<double>>& A, const vector<vector<double>>& B, int num_processes);
+void printUsage(const char* programName);
+
 // Function to read matrix from file
 vector<vector<double>> readMatrix(const string& filename, int& rows, int& cols) {
     ifstream file(filename);
@@ -333,23 +346,29 @@ void printUsage(const char* programName) {
     cout << "  " << programName << " matrix_A.txt matrix_B.txt" << endl;
 }
 
+// Logging helper
+void logMessage(ostream& out, const string& msg) {
+    cout << msg << endl;
+    out << msg << endl;
+}
+
 int main(int argc, char* argv[]) {
-    // Check for minimum required arguments
     if (argc < 3) {
         printUsage(argv[0]);
         return 1;
     }
-    
+
     string fileA = argv[1];
     string fileB = argv[2];
-    
-    // Default values
     int num_processes = 1;
     string output_file = "output.txt";
-    
-    // Parse optional arguments
+    bool enable_log = false;
+    string log_filename;
+    ofstream log_file;
+    ostream* log_stream = &cout;
+
     int opt;
-    while ((opt = getopt(argc, argv, "n:o:h")) != -1) {
+    while ((opt = getopt(argc, argv, "n:o:hl")) != -1) {
         switch (opt) {
             case 'n':
                 num_processes = atoi(optarg);
@@ -361,78 +380,86 @@ int main(int argc, char* argv[]) {
             case 'o':
                 output_file = optarg;
                 break;
+            case 'l':
+                enable_log = true;
+                break;
             case 'h':
-                printUsage(argv[0]);
-                return 0;
             default:
                 printUsage(argv[0]);
                 return 1;
         }
     }
-    
+
+    if (enable_log) {
+        size_t dot_pos = output_file.find_last_of('.');
+        if (dot_pos != string::npos) {
+            log_filename = output_file.substr(0, dot_pos) + "_log.txt";
+        } else {
+            log_filename = output_file + "_log.txt";
+        }
+        log_file.open(log_filename);
+        if (!log_file.is_open()) {
+            cerr << "Error opening log file: " << log_filename << endl;
+            return 1;
+        }
+        log_stream = &log_file;
+    }
+
     int N, M, P, M_B;
-    
-    // Start timing
     auto start_total = chrono::high_resolution_clock::now();
-    
-    // Read matrices
     auto start_read = chrono::high_resolution_clock::now();
     vector<vector<double>> A = readMatrix(fileA, N, M);
     vector<vector<double>> B = readMatrix(fileB, M_B, P);
     auto end_read = chrono::high_resolution_clock::now();
-    
-    // Check if matrices can be multiplied
+
     if (M != M_B) {
         cerr << "Error: Incompatible matrix dimensions for multiplication" << endl;
         cerr << "Matrix A: " << N << "x" << M << endl;
         cerr << "Matrix B: " << M_B << "x" << P << endl;
         return 1;
     }
-    
-    cout << "Matrix A: " << N << "x" << M << endl;
-    cout << "Matrix B: " << M << "x" << P << endl;
-    
+
+    *log_stream << "Matrix A: " << N << "x" << M << endl;
+    *log_stream << "Matrix B: " << M << "x" << P << endl;
+
     vector<vector<double>> C;
     string implementation_type;
-    
-    // Start multiplication timing
+
     auto start_mult = chrono::high_resolution_clock::now();
-    
-    // Choose between sequential and parallel implementation
     if (num_processes == 1) {
-        cout << "Using sequential implementation" << endl;
+        *log_stream << "Using sequential implementation" << endl;
         implementation_type = "Sequential";
         C = multiplyMatricesSequential(A, B);
     } else {
-        cout << "Using parallel implementation with " << num_processes << " processes" << endl;
+        *log_stream << "Using parallel implementation with " << num_processes << " processes" << endl;
         implementation_type = "Parallel";
         C = multiplyMatricesParallel(A, B, num_processes);
     }
-    
-    // End multiplication timing
     auto end_mult = chrono::high_resolution_clock::now();
-    
-    // Write result to file
+
     auto start_write = chrono::high_resolution_clock::now();
     writeMatrix(output_file, C);
     auto end_write = chrono::high_resolution_clock::now();
-    
-    // Calculate and print execution times
+
     auto end_total = chrono::high_resolution_clock::now();
-    
+
     chrono::duration<double, milli> read_time = end_read - start_read;
     chrono::duration<double, milli> mult_time = end_mult - start_mult;
     chrono::duration<double, milli> write_time = end_write - start_write;
     chrono::duration<double, milli> total_time = end_total - start_total;
-    
-    cout << "\nPerformance Metrics (" << implementation_type << " Execution";
-    if (num_processes > 1) cout << " with " << num_processes << " processes";
-    cout << "):" << endl;
-    cout << "Read time: " << read_time.count() << " ms" << endl;
-    cout << "Multiplication time: " << mult_time.count() << " ms" << endl;
-    cout << "Write time: " << write_time.count() << " ms" << endl;
-    cout << "Total time: " << total_time.count() << " ms" << endl;
-    cout << "Result written to: " << output_file << endl;
-    
+
+    *log_stream << "\nPerformance Metrics (" << implementation_type << " Execution";
+    if (num_processes > 1) *log_stream << " with " << num_processes << " processes";
+    *log_stream << "):" << endl;
+    *log_stream << "Read time: " << read_time.count() << " ms" << endl;
+    *log_stream << "Multiplication time: " << mult_time.count() << " ms" << endl;
+    *log_stream << "Write time: " << write_time.count() << " ms" << endl;
+    *log_stream << "Total time: " << total_time.count() << " ms" << endl;
+    *log_stream << "Result written to: " << output_file << endl;
+
+    if (enable_log) {
+        log_file.close();
+    }
+
     return 0;
 }
