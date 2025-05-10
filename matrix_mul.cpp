@@ -1,3 +1,14 @@
+/*
+ * University of Antioquia - Operating Systems Course
+ * Practice #3 - Matrix Multiplication Using Processes
+ * Team Members:
+ * - Juan Pablo Gómez López - 1037665653
+ * - Danilo Tovar - 1193578670
+ * 
+ * IPC Mechanism: Shared Memory
+ * Reason: None. Picked randomly.
+ */
+
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -12,6 +23,8 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <iomanip>     
+#include <limits>     
 
 using namespace std;
 
@@ -91,11 +104,13 @@ void writeMatrix(const string& filename, const vector<vector<double>>& matrix) {
         cerr << "Error opening file for writing: " << filename << endl;
         exit(1);
     }
-    
+
+    // Set precision for full double accuracy
+    file << fixed << setprecision(numeric_limits<double>::max_digits10);
+
     int rows = matrix.size();
     int cols = matrix[0].size();
-    
-    // Write matrix elements - each element separated by spaces, each row on a new line
+
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < cols; j++) {
             file << matrix[i][j];
@@ -103,9 +118,10 @@ void writeMatrix(const string& filename, const vector<vector<double>>& matrix) {
         }
         file << endl;
     }
-    
+
     file.close();
 }
+
 
 // Function to multiply matrices sequentially
 vector<vector<double>> multiplyMatricesSequential(const vector<vector<double>>& A, const vector<vector<double>>& B) {
