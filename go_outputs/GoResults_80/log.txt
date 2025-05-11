@@ -1,3 +1,3 @@
-Sequential time: 88.5709ms
-Tiempo paralelo (con 80 procesos): 817.2907ms
-Speedup: 0.11x
+Tiempo secuencial: 84.510047ms
+Tiempo paralelo (con 80 procesos): 497.699711ms
+Speedup: 0.17x

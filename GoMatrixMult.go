@@ -9,17 +9,19 @@ import (
     "math"
     "os"
     "os/exec"
+    "path/filepath"
     "strconv"
     "strings"
     "sync"
     "time"
-    "path/filepath"
+
+    "golang.org/x/sys/unix"
 )
 
-// Tamaño en bytes de un float64
+// Tamaño en bytes de un float64.
 const elementSize = 8
 
-// ------------------ Funciones para lectura y escritura de matrices ------------------
+// ------------------ Lectura y escritura de matrices ------------------
 
 // readMatrix lee una matriz desde un archivo y devuelve una matriz (slice 2D de float64).
 func readMatrix(filename string) ([][]float64, error) {
@@ -47,13 +49,14 @@ func readMatrix(filename string) ([][]float64, error) {
         }
         matrix = append(matrix, row)
     }
+
     if err := scanner.Err(); err != nil {
         return nil, err
     }
     return matrix, nil
 }
 
-// writeMatrix escribe la matriz en un archivo formateando cada elemento con 2 decimales.
+// writeMatrix escribe la matriz en un archivo formateando cada elemento con 14 decimales.
 func writeMatrix(filename string, matrix [][]float64) error {
     file, err := os.Create(filename)
     if err != nil {
@@ -71,7 +74,7 @@ func writeMatrix(filename string, matrix [][]float64) error {
     return writer.Flush()
 }
 
-// ------------------ Función de multiplicación secuencial ------------------
+// ------------------ Multiplicación de matrices ------------------
 
 // sequentialMultiply realiza la multiplicación clásica de matrices (A * B) y devuelve la matriz resultado.
 func sequentialMultiply(A, B [][]float64) [][]float64 {
@@ -92,9 +95,7 @@ func sequentialMultiply(A, B [][]float64) [][]float64 {
     return C
 }
 
-// ------------------ Función para multiplicación parcial (subconjunto de filas) ------------------
-
-// multiplyPartial calcula el producto de matrices para las filas de A en el rango [startRow, endRow).
+// multiplyPartial calcula el producto parcial para las filas de A en el rango [startRow, endRow).
 func multiplyPartial(A, B [][]float64, startRow, endRow int) [][]float64 {
     M := len(A[0])
     P := len(B[0])
@@ -115,28 +116,46 @@ func multiplyPartial(A, B [][]float64, startRow, endRow int) [][]float64 {
     return partial
 }
 
-// ------------------ Función para crear "memoria compartida" (archivo) ------------------
+// ------------------ Manejo de memoria compartida vía MMap ------------------
 
-// createSharedMemory crea un archivo de tamaño "size" que servirá como memoria compartida.
-func createSharedMemory(filename string, size int) (*os.File, error) {
-    file, err := os.Create(filename)
+// createSharedMemoryFile crea (o trunca) un archivo de tamaño "size" que usaremos para la memoria compartida.
+func createSharedMemoryFile(filename string, size int) error {
+    f, err := os.Create(filename)
+    if err != nil {
+        return err
+    }
+    defer f.Close()
+    return f.Truncate(int64(size))
+}
+
+// openSharedMemoryMmap abre el archivo indicado y lo mapea en memoria.
+func openSharedMemoryMmap(filename string) ([]byte, error) {
+    f, err := os.OpenFile(filename, os.O_RDWR, 0666)
     if err != nil {
         return nil, err
     }
-    if err := file.Truncate(int64(size)); err != nil {
-        file.Close()
+    defer f.Close()
+
+    fi, err := f.Stat()
+    if err != nil {
         return nil, err
     }
-    return file, nil
+    size := int(fi.Size())
+
+    data, err := unix.Mmap(int(f.Fd()), 0, size, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
+    if err != nil {
+        return nil, err
+    }
+    return data, nil
 }
 
-// ------------------ Función para el proceso hijo ------------------
+// ------------------ Proceso hijo ------------------
 //
-// El proceso hijo se invoca con los argumentos:
-//    child <startRow> <endRow> <shmFilename> <P> <fileA> <fileB>
+// Se invoca con los argumentos:
+//   child <startRow> <endRow> <shmFilename> <P> <fileA> <fileB>
 //
-// Lee las matrices A y B, calcula la multiplicación parcial para las filas asignadas,
-// y escribe el resultado en el archivo de memoria compartida en la región correspondiente.
+// Lee las matrices A y B, calcula la multiplicación parcial de las filas asignadas,
+// y escribe el resultado en la región correspondiente del mapeo de memoria compartida.
 func runChildProcess() {
     if len(os.Args) < 8 {
         fmt.Fprintln(os.Stderr, "Uso: <program> child <startRow> <endRow> <shmFilename> <P> <fileA> <fileB>")
@@ -161,7 +180,7 @@ func runChildProcess() {
     fileA := os.Args[6]
     fileB := os.Args[7]
 
-    // Leer matrices A y B
+    // Leer matrices A y B.
     A, err := readMatrix(fileA)
     if err != nil {
         fmt.Fprintln(os.Stderr, "Error leyendo A:", err)
@@ -173,48 +192,47 @@ func runChildProcess() {
         os.Exit(1)
     }
 
-    // Calcular el producto parcial para las filas [startRow, endRow)
+    // Calcular el producto parcial.
     partialResult := multiplyPartial(A, B, startRow, endRow)
 
-    // Abrir el archivo de memoria compartida (modo lectura-escritura)
-    f, err := os.OpenFile(shmFilename, os.O_RDWR, 0666)
+    // Abrir la memoria compartida mediante MMap.
+    shmData, err := openSharedMemoryMmap(shmFilename)
     if err != nil {
-        fmt.Fprintln(os.Stderr, "Error abriendo el archivo de memoria compartida:", err)
+        fmt.Fprintln(os.Stderr, "Error abriendo memoria compartida (MMap):", err)
         os.Exit(1)
     }
-    defer f.Close()
 
-    // Escribir cada valor en la posición correspondiente del archivo
-    // Cada float64 ocupa 8 bytes; se dispone la matriz de forma "row-major"
+    // Escribir cada elemento en la posición adecuada del mapeo.
     for i, row := range partialResult {
         globalRow := startRow + i
         for j, val := range row {
-            offset := int64((globalRow*P + j) * elementSize)
-            buf := make([]byte, elementSize)
-            binary.LittleEndian.PutUint64(buf, math.Float64bits(val))
-            _, err := f.WriteAt(buf, offset)
-            if err != nil {
-                fmt.Fprintln(os.Stderr, "Error escribiendo en memoria compartida:", err)
-                os.Exit(1)
-            }
+            offset := (globalRow*P + j) * elementSize
+            binary.LittleEndian.PutUint64(shmData[offset:offset+elementSize], math.Float64bits(val))
         }
     }
+
+    // Sincronizar los cambios (MS_SYNC obliga a la escritura inmediata).
+    if err := unix.Msync(shmData, unix.MS_SYNC); err != nil {
+        fmt.Fprintln(os.Stderr, "Error en Msync:", err)
+        os.Exit(1)
+    }
+    unix.Munmap(shmData)
     os.Exit(0)
 }
 
-// ------------------ Función para el proceso padre ------------------
+// ------------------ Proceso padre ------------------
 //
-// Se usan flags para recibir:
+// Usa flags para recibir:
 //   -A : archivo para la matriz A
 //   -B : archivo para la matriz B
 //   -N : número de procesos (hijos) a utilizar
 //
-// El padre lee las matrices, realiza la multiplicación secuencial (para comparar tiempos),
-// crea el archivo de memoria compartida, divide las filas de A entre los procesos hijos
-// (cada proceso ejecuta el modo "child" y escribe sobre la zona que le corresponde),
-// espera a que todos finalicen, lee el resultado y lo escribe en "C.txt".
+// El padre lee las matrices, ejecuta la multiplicación secuencial (baseline),
+// crea el archivo de memoria compartida (que se mapea en cada proceso hijo),
+// divide las filas de A entre los procesos hijos (cada uno ejecuta el modo "child")
+// y, una vez que estos finalizan, lee el resultado de la memoria mapeada y lo escribe en archivos.
 func runParentProcess() {
-    // Definir flags
+    // Definir flags.
     aFile := flag.String("A", "", "Archivo de entrada para la matriz A")
     bFile := flag.String("B", "", "Archivo de entrada para la matriz B")
     numProc := flag.Int("N", 1, "Número de procesos a utilizar")
@@ -224,7 +242,7 @@ func runParentProcess() {
         log.Fatal("Debe proporcionar los archivos de entrada para A y B usando -A y -B.")
     }
 
-    // Leer las matrices
+    // Leer matrices.
     A, err := readMatrix(*aFile)
     if err != nil {
         log.Fatal("Error leyendo la matriz A:", err)
@@ -234,7 +252,7 @@ func runParentProcess() {
         log.Fatal("Error leyendo la matriz B:", err)
     }
 
-    // Verificar dimensiones: el número de columnas de A debe ser igual al número de filas de B.
+    // Verificar compatibilidad de dimensiones: columnas de A == filas de B.
     if len(A) == 0 || len(B) == 0 || len(A[0]) != len(B) {
         log.Fatal("Dimensiones incompatibles entre A y B.")
     }
@@ -249,17 +267,13 @@ func runParentProcess() {
     durationSeq := time.Since(startSeq)
     fmt.Printf("Tiempo secuencial: %v\n", durationSeq)
 
-
-    // --- Multiplicación en paralelo con memoria compartida ---
-    // El archivo de "memoria compartida" tendrá tamaño = N * P * 8 bytes.
+    // --- Multiplicación en paralelo con memoria compartida (MMap) ---
+    // El archivo de memoria compartida tendrá tamaño = N * P * 8 bytes.
     shmFilename := "shm.dat"
     shmSize := N * P * elementSize
-    shmFile, err := createSharedMemory(shmFilename, shmSize)
-    if err != nil {
-        log.Fatal("Error creando memoria compartida:", err)
+    if err := createSharedMemoryFile(shmFilename, shmSize); err != nil {
+        log.Fatal("Error creando archivo de memoria compartida:", err)
     }
-    // Cerramos el archivo, ya que los procesos hijos lo abrirán según se requiera.
-    shmFile.Close()
 
     // Dividir las filas de A entre los procesos hijos.
     numWorkers := *numProc
@@ -282,12 +296,11 @@ func runParentProcess() {
         wg.Add(1)
         go func(sRow, eRow int) {
             defer wg.Done()
-            // Invocar el proceso hijo: se pasan los parámetros:
+            // Invocar el proceso hijo con:
             // "child" <startRow> <endRow> <shmFilename> <P> <fileA> <fileB>
             cmd := exec.Command(os.Args[0], "child",
                 strconv.Itoa(sRow), strconv.Itoa(eRow),
                 shmFilename, strconv.Itoa(P), *aFile, *bFile)
-            // Se espera a que el hijo termine
             if err := cmd.Run(); err != nil {
                 log.Printf("Error en proceso hijo (%d-%d): %v\n", sRow, eRow, err)
             }
@@ -299,70 +312,66 @@ func runParentProcess() {
     speedup := float64(durationSeq) / float64(durationPar)
     fmt.Printf("Speedup: %.2fx\n", speedup)
 
-    // Leer la matriz resultado desde el archivo de memoria compartida.
-    resultFile, err := os.Open(shmFilename)
+    // Leer los resultados de la memoria compartida mediante MMap.
+    shmData, err := openSharedMemoryMmap(shmFilename)
     if err != nil {
-        log.Fatal("Error abriendo la memoria compartida para leer los resultados:", err)
+        log.Fatal("Error abriendo memoria compartida con MMap:", err)
     }
-
     C_par := make([][]float64, N)
     for i := 0; i < N; i++ {
         C_par[i] = make([]float64, P)
         for j := 0; j < P; j++ {
-            offset := int64((i*P + j) * elementSize)
-            buf := make([]byte, elementSize)
-            _, err := resultFile.ReadAt(buf, offset)
-            if err != nil {
-                log.Fatal("Error leyendo desde la memoria compartida:", err)
-            }
-            bits := binary.LittleEndian.Uint64(buf)
+            offset := (i*P + j) * elementSize
+            bits := binary.LittleEndian.Uint64(shmData[offset : offset+elementSize])
             C_par[i][j] = math.Float64frombits(bits)
         }
     }
+    unix.Munmap(shmData)
 
-    // Create the output directory "results"
+    // Crear el directorio de salida "GoResults".
     outputDir := "GoResults"
     if err := os.MkdirAll(outputDir, 0755); err != nil {
-    	log.Fatal("Error creating output directory:", err)
+        log.Fatal("Error creando directorio de resultados:", err)
     }
 
-    // Construct the full file path.
+    // Escribir la matriz del proceso paralelo en "GoResults/C_par.txt"
     outputPath := filepath.Join(outputDir, "C_par.txt")
-
-    // Escribir la matriz resultado en "GoResults/C_par.txt"
     if err := writeMatrix(outputPath, C_par); err != nil {
-        log.Fatal("Error escribiendo la matriz C:", err)
+        log.Fatal("Error escribiendo la matriz C_par:", err)
     }
 
-    // Construct the full file path.
+    // Escribir la matriz del proceso secuencial en "GoResults/C_seq.txt"
     outputPath = filepath.Join(outputDir, "C_seq.txt")
-
-    // Escribir la matriz resultado del proceso secuencial en "GoResults/C_seq.txt"
     if err := writeMatrix(outputPath, C_seq); err != nil {
-        log.Fatal("Error escribiendo la matriz C:", err)
+        log.Fatal("Error escribiendo la matriz C_seq:", err)
     }
 
-    // --- Log the timings to log.txt ---
+    // Registrar los tiempos en log.txt.
     logFilePath := filepath.Join(outputDir, "log.txt")
     logFile, err := os.Create(logFilePath)
     if err != nil {
-        log.Fatalf("Error creating log file: %v", err)
+        log.Fatalf("Error creando archivo log: %v", err)
     }
+<<<<<<< HEAD
     // Write the timing info.
     fmt.Fprintf(logFile, "Sequential time: %v\n", durationSeq)
     fmt.Fprintf(logFile, "Tiempo paralelo (con %d procesos): %v\n", numWorkers, durationPar)
+||||||| parent of ab9143e (Update Go implementation and tests)
+    // Write the timing info.
+    fmt.Fprintf(logFile, "Sequential time: %v\n", durationSeq)
+    fmt.Fprintf(logFile, "Parallel time: %v\n", durationPar)
+=======
+    fmt.Fprintf(logFile, "Tiempo secuencial: %v\n", durationSeq)
+    fmt.Fprintf(logFile, "Tiempo paralelo (con %d procesos): %v\n", numWorkers, durationPar)
+>>>>>>> ab9143e (Update Go implementation and tests)
     fmt.Fprintf(logFile, "Speedup: %.2fx\n", speedup)
-    logFile.Close() // Ensure it's flushed and closed
+    logFile.Close()
 
-    // Close the result file before calling os.Remove
-    resultFile.Close()
-
-    // Limpiar (eliminar el archivo de memoria compartida)
-    err = os.Remove(shmFilename)
-    if err != nil {
-	log.Printf("Error removing %s: %v\n", shmFilename, err)
+    // Limpiar: eliminar el archivo de memoria compartida.
+    if err := os.Remove(shmFilename); err != nil {
+        log.Printf("Error removiendo %s: %v\n", shmFilename, err)
     } else {
-	log.Printf("%s successfully removed.\n", shmFilename)
+        log.Printf("%s eliminado correctamente.\n", shmFilename)
     }
 }
 
@@ -372,6 +381,6 @@ func main() {
         runChildProcess()
         return
     }
-    // De lo contrario, se ejecuta el proceso padre.
+    // Caso contrario, se ejecuta el proceso padre.
     runParentProcess()
 }
