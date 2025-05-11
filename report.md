@@ -1,20 +1,24 @@
-University of Antioquia - Operating Systems Course  
-Practice #3 - Matrix Multiplication Using Processes  
+# University of Antioquia - Operating Systems Course  
+# Practice #3 - Matrix Multiplication Using Processes  
 
 Team Members:  
 - Juan Pablo Gómez López - 1037665653
-- Danilo Tovar - 1193578670
+- Danilo Antonio Tovar Arias - 1193578670
 
 
 # Mecanismo IPC
 Mecanismo IPC: Shared Memory
+
 Razón: Ninguna en particular. La escogimos al azar.
+
+<details>
+  <summary>C++</summary>
 
 # Resultados
 Los resultados se pueden ver en el notebook [informe.ipynb](notebooks/informe.ipynb), en la carpeta notebooks. Sin embargo, se resume el proceso y se expone los resultados a continuación.
 
 ## Proceso
-Se ejecutó el programa [matrix_mul](matrix_mul) para las matrices A_big.txt y B.txt, con los valores [2 5 10 20 35 55 80 100] en la cantidad de procesos. Esto generó un archivo csv con los tiempos totales de ejecución por cada proceso.
+Se ejecutó el programa [matrix_mul](matrix_mul) para las matrices A_big.txt y B_big.txt, con los valores [2 5 10 20 35 55 80 100] en la cantidad de procesos. Esto generó un archivo csv con los tiempos totales de ejecución por cada proceso.
 
 En cada iteración, el programa [matrix_mul](matrix_mul) calcula el resultado de la multiplcación, el tiempo de cálculo para un solo proceso (sequential) y para n procesos (parallel). 
 
@@ -36,5 +40,34 @@ Se observa una caída abrupta del tiempo de ejecución al aumentar hasta 10 proc
 ## Execution Time Comparison
 ![Execution Time Comparison](figs/execution_time_comparison.png)
 
-Se compara la ejecución sequiencial con la Paralela. Se observa que la paralela es mejor (menor tiempo de ejecución) en todos los casos.
+Se compara la ejecución Secuencial con la Paralela. Se observa que la paralela es mejor (menor tiempo de ejecución) en todos los casos.
+</details>
+
+<details>
+  <summary>Go</summary>
+  
+## Proceso
+Se ejecutó el programa [GoMatrixMult](GoMatrixMult.go) para las matrices A_big.txt y B_big.txt, con los valores [2 5 10 20 35 55 80 100] en la cantidad de procesos.
+
+En cada iteración, el programa [GoMatrixMult](GoMatrixMult.go) calcula el resultado de la multiplcación, el tiempo de cálculo para un solo proceso (sequential) y para n procesos (parallel), así como el speedup que se generó, todos estos elementos se almacenaron para cada prueba en la carpeta [go_outputs](go_outputs).
+
+A continuación se muestran las figuras que exponen visualmente los resultados.
+
+## Speedup vs Processes
+
+![Speedup vs Processes](https://github.com/user-attachments/assets/d44028b4-5eae-472d-b3e6-7cc3c7c21d5c)
+
+En este gráfico se observa como el speedup no es bueno, pues se encuentra en valores menores a 1, y a pesar que inicialmente parece mejorar, despues de 2 procesos, el speedup disminuye drasticamente.
+
+## Parallel Time vs Processes
+![Parallel Time vs Processes](https://github.com/user-attachments/assets/d03ddec6-83db-4b84-ba05-17d727abc859)
+
+Se observa un aumento significativo en los tiempos de ejecución al aumentar la cantidad de procesos posterior a 2 procesos.
+
+## Execution Time Comparison
+![Execution Time Comparison](https://github.com/user-attachments/assets/c4d7eacc-b6e6-4343-b21a-2db7b660d009)
+
+Se compara la ejecución Secuencial con la Paralela. Se observa que la secuencial es mejor (menor tiempo de ejecución) en todos los casos.
+  
+</details>
 
