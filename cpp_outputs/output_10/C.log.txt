@@ -1,0 +1,3 @@
+Sequential time: 0.489529 seconds
+Parallel time (10 processes): 0.076348 seconds
+Speedup: 6.411844
