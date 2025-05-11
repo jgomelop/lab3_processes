@@ -350,7 +350,7 @@ func runParentProcess() {
     }
     // Write the timing info.
     fmt.Fprintf(logFile, "Sequential time: %v\n", durationSeq)
-    fmt.Fprintf(logFile, "Parallel time: %v\n", durationPar)
+    fmt.Fprintf(logFile, "Tiempo paralelo (con %d procesos): %v\n", numWorkers, durationPar)
     fmt.Fprintf(logFile, "Speedup: %.2fx\n", speedup)
     logFile.Close() // Ensure it's flushed and closed
 
