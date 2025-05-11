@@ -51,7 +51,7 @@ Esto generará una carpeta llamada `output_CANTIDAD_PROCESOS` donde se encuentra
   ./GoMatrixMult -A ./test_data/A_big.txt -B ./test_data/B_big.txt -N <CANTIDAD_PROCESOS>
   ```
 
-Esto generará una carpeta llamada `GoResults` con dos archivos, un archivo llamado `C_par.txt` donde se encuentra el resultado de la multiplicación paralela, y un archivo llamado `C_seq.txt` donde se encuentra el resultado de la multiplicación secuencial.
+Esto generará una carpeta llamada `GoResults` con tres archivos, un archivo llamado `C_par.txt` donde se encuentra el resultado de la multiplicación paralela, un archivo llamado `C_seq.txt` donde se encuentra el resultado de la multiplicación secuencial y finalmente un archivo `log.txt` con los resultados de tiempos de procesamiento y speedup.
 </details>
 
 ## Reporte

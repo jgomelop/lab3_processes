@@ -13,6 +13,7 @@ import (
     "strings"
     "sync"
     "time"
+    "path/filepath"
 )
 
 // Tamaño en bytes de un float64
@@ -319,20 +320,39 @@ func runParentProcess() {
         }
     }
 
-    // Escribir la matriz resultado en "C.txt"
-    if err := writeMatrix("C.txt", C_par); err != nil {
+    // Create the output directory "results"
+    outputDir := "GoResults"
+    if err := os.MkdirAll(outputDir, 0755); err != nil {
+    	log.Fatal("Error creating output directory:", err)
+    }
+
+    // Construct the full file path.
+    outputPath := filepath.Join(outputDir, "C_par.txt")
+
+    // Escribir la matriz resultado en "GoResults/C_par.txt"
+    if err := writeMatrix(outputPath, C_par); err != nil {
         log.Fatal("Error escribiendo la matriz C:", err)
     }
 
-    if (C_seq != nil){
-	fmt.Printf("")
-    }
+    // Construct the full file path.
+    outputPath = filepath.Join(outputDir, "C_seq.txt")
 
-    /* Escribir la matriz resultado del proceso secuencial en "C_seq.txt"
-    if err := writeMatrix("C_seq.txt", C_seq); err != nil {
+    // Escribir la matriz resultado del proceso secuencial en "GoResults/C_seq.txt"
+    if err := writeMatrix(outputPath, C_seq); err != nil {
         log.Fatal("Error escribiendo la matriz C:", err)
     }
-    */
+
+    // --- Log the timings to log.txt ---
+    logFilePath := filepath.Join(outputDir, "log.txt")
+    logFile, err := os.Create(logFilePath)
+    if err != nil {
+        log.Fatalf("Error creating log file: %v", err)
+    }
+    // Write the timing info.
+    fmt.Fprintf(logFile, "Sequential time: %v\n", durationSeq)
+    fmt.Fprintf(logFile, "Parallel time: %v\n", durationPar)
+    fmt.Fprintf(logFile, "Speedup: %.2fx\n", speedup)
+    logFile.Close() // Ensure it's flushed and closed
 
     // Close the result file before calling os.Remove
     resultFile.Close()
