@@ -14,6 +14,10 @@ Este proyecto implementa la multiplicación de matrices utilizando procesos y me
 
 ---
 
+
+  > [!WARNING]
+  > La versión en Go utiliza funciones de gestion de memoria propias de sistemas UNIX, para ejecutar el programa en sistemas Windows se requiere de WSL.
+
 ## Compilación
 <details>
   <summary>C++</summary>
